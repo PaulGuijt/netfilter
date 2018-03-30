@@ -7,8 +7,10 @@ These files are initially made for my system: Raspberry Pi with Raspbian, and wi
  - Fail2Ban
  - IPSet-Blacklist
  
-Netfilter-persistent and Fail2Ban go well together, as long as you add to the header of /etc/init.d/netfilter-persistent:
- # X-Start-Before:    fail2ban
- # X-Stop-After:      fail2ban
+Netfilter-persistent and Fail2Ban go well together, as long as you add to the header of /etc/init.d/netfilter-persistent
+```
+# X-Start-Before:    fail2ban
+# X-Stop-After:      fail2ban
+```
 
 
