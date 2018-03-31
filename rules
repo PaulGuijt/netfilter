@@ -1,0 +1,173 @@
+# IPTables rules for both IPv4 and IPv6
+# Paul Guijt <paul.guijt@gmail.com>
+# 01 April 2018
+# 
+# Suggestions and notification of use are appreciated. 
+# 
+# Put 'chain = Fail2Ban' in the jail.local. 
+# Dedicated chains for local traffic add to the distinction between the rules for local and 'foreign' traffic. 
+#
+# Some rules drop what's dropped by the policy, and accept what by policy is accepted. Either for speed, or just in case the policy is changed. 
+# Of course, you can leave them out as you like by commenting them out or by deleting. 
+#
+# For licence info see https://github.com/PaulGuijt/netfilter/blob/master/LICENSE. 
+# The SSHBrute and ICMPFlood chains are copyright 2012-2014 Jakub Jirutka <jakub@jirutka.cz>.
+#
+
+*filter
+:INPUT		DROP
+:FORWARD	DROP
+:OUTPUT		ACCEPT
+
+-N Fail2Ban
+-N LocalIN
+-N LocalOUT
+-N SSHBrute
+-N ICMPFlood
+
+-A INPUT	-i lo												-j ACCEPT	
+-A OUTPUT	-o lo												-j ACCEPT	
+
+-A INPUT -4	-s 127.0.0.0	! -i lo										-j DROP		
+-A INPUT -6	-s ::1/128	! -i lo										-j DROP		
+
+-A INPUT -4	-m set		--match-set blacklist src							-j DROP		
+#-A INPUT -6	-m set          --match-set blacklist6 src							-j DROP		
+-A INPUT	-m conntrack	--ctstate INVALID								-j DROP		
+-A INPUT	-m conntrack	--ctstate RELATED,ESTABLISHED							-j ACCEPT	
+-A OUTPUT       -m conntrack	--ctstate RELATED,ESTABLISHED							-j ACCEPT
+
+-A INPUT	-p tcp --tcp-flags SYN,FIN SYN,FIN								-j DROP
+-A INPUT	-p tcp --tcp-flags SYN,RST SYN,RST								-j DROP
+-A INPUT							-m recent --name psc --update --seconds 60	-j DROP
+
+-A INPUT													-j Fail2Ban
+
+-A INPUT -4	-s 192.168.178.0/24										-j LocalIN
+-A INPUT -6	-s fe80::/8											-j LocalIN
+
+-A OUTPUT	-p tcp	--sport ssh				-m conntrack --ctstate ESTABLISHED		-j ACCEPT
+
+-A INPUT	-p tcp	-m multiport --dports smtp,submission	-m conntrack --ctstate NEW,ESTABLISHED		-j ACCEPT
+-A OUTPUT	-p tcp  -m multiport --dports smtp,submission	-m conntrack --ctstate NEW,ESTABLISHED		-j ACCEPT
+
+-A INPUT	-p udp  --sport domain				-m conntrack --ctstate ESTABLISHED		-j ACCEPT
+-A INPUT	-p tcp	--sport domain				-m conntrack --ctstate ESTABLISHED		-j ACCEPT
+-A OUTPUT	-p udp  --dport domain				-m conntrack --ctstate NEW,ESTABLISHED		-j ACCEPT
+-A OUTPUT	-p tcp  --dport domain				-m conntrack --ctstate NEW,ESTABLISHED		-j ACCEPT
+
+-A INPUT	-p tcp -m multiport --dports http,https		-m conntrack --ctstate NEW			-j ACCEPT
+-A OUTPUT	-p tcp -m multiport --dports http,https		-m conntrack --ctstate NEW,ESTABLISHED		-j ACCEPT
+
+-A INPUT	-p tcp	--dport auth --tcp-flags FIN,SYN,RST,ACK SYN	-m conntrack --ctstate NEW		-j REJECT --reject-with tcp-reset
+
+-A INPUT	-p udp  --sport ntp										-j ACCEPT
+-A OUTPUT	-p udp	--dport ntp										-j ACCEPT
+
+-A INPUT	-p udp	-m multiport --dports epmap,netbios-ns,netbios-dgm,netbios-ssn,microsoft-ds		-j DROP		-m comment --comment "SMB (Samba / Windows Sharing)"
+-A INPUT	-p udp	--sport netbios-ns			--dport 1024:65535				-j DROP		-m comment --comment "SMB (Samba / Windows Sharing)"
+
+-A OUTPUT	-p tcp	--sport rsync				-m conntrack --ctstate ESTABLISHED		-j ACCEPT
+
+-A INPUT	-p udp	--dport 1900										-j DROP		-m comment --comment UPnP
+
+-A INPUT	-p tcp	--dport mysql	-i !lo			-m recent	--name psc --set		-j DROP
+
+#-A OUTPUT	-m owner --uid-owner 33										-j apache_user
+
+-A INPUT -4	-p icmp						-m limit --limit 1/second			-j ACCEPT
+-A INPUT -4	-p icmp												-j DROP
+-A INPUT -6     -p ipv6-icmp					-m limit --limit 1/second                       -j ACCEPT
+-A INPUT -6     -p ipv6-icmp						                                        -j DROP
+
+# Permit needed ICMP packet types for IPv6 per RFC 4890.
+-A INPUT -6	-p ipv6-icmp	--icmpv6-type   1								-j ACCEPT
+-A INPUT -6	-p ipv6-icmp	--icmpv6-type   2								-j ACCEPT
+-A INPUT -6	-p ipv6-icmp	--icmpv6-type   3								-j ACCEPT
+-A INPUT -6	-p ipv6-icmp	--icmpv6-type   4								-j ACCEPT
+-A INPUT -6	-p ipv6-icmp	--icmpv6-type 133								-j ACCEPT
+-A INPUT -6	-p ipv6-icmp	--icmpv6-type 134								-j ACCEPT
+-A INPUT -6	-p ipv6-icmp	--icmpv6-type 135								-j ACCEPT
+-A INPUT -6	-p ipv6-icmp	--icmpv6-type 136								-j ACCEPT
+-A INPUT -6	-p ipv6-icmp	--icmpv6-type 137								-j ACCEPT
+-A INPUT -6	-p ipv6-icmp	--icmpv6-type 141								-j ACCEPT
+-A INPUT -6	-p ipv6-icmp	--icmpv6-type 142								-j ACCEPT
+-A INPUT -6	-p ipv6-icmp	--icmpv6-type 148								-j ACCEPT
+-A INPUT -6	-p ipv6-icmp	--icmpv6-type 149								-j ACCEPT
+
+# Permit IMCP echo requests (ping) and use ICMPFLOOD chain for preventing ping flooding.
+-A INPUT -6	-p ipv6-icmp	--icmpv6-type 128								-j ICMPFlood
+
+# Prevent DOS by filling log files.
+-A INPUT -m limit --limit 1/second --limit-burst 100								-j LOG --log-prefix "IPTables [DOS]: "	--log-level warning
+
+# Log everything that is dropped
+-A INPUT													-j LOG --log-prefix "IPTables: "	--log-level info
+
+#
+#
+# Chains for traffic on the local, private network. As such, there is no need for -s and -d here. 
+#
+#
+
+-A LocalIN	-p udp	--dport echo				-m conntrack --ctstate NEW,ESTABLISHED		-j ACCEPT
+-A LocalIN	-p tcp	--dport ssh				-m conntrack --ctstate NEW,ESTABLISHED		-j SSHBrute
+
+-A LocalIN	-p udp  --sport bootps:bootpc			--dport bootps:bootpc				-j ACCEPT
+-A LocalIN	-p udp  --dport dhcpv6-client									-j ACCEPT
+
+-A LocalIN	-p udp  --sport mdns				-m conntrack --ctstate ESTABLISHED              -j ACCEPT
+-A LocalIN	-p tcp  --sport mdns				-m conntrack --ctstate ESTABLISHED              -j ACCEPT
+-A LocalOUT	-p udp  --dport mdns				-m conntrack --ctstate NEW,ESTABLISHED          -j ACCEPT
+-A LocalOUT	-p tcp  --dport mdns				-m conntrack --ctstate NEW,ESTABLISHED          -j ACCEPT
+
+-A LocalIN	-p tcp  -m multiport --dports sunrpc,nfs							-j ACCEPT
+-A LocalIN	-p udp  -m multiport --dports sunrpc,nfs							-j ACCEPT
+
+-A LocalIN	-p tcp	--dport rsync				-m conntrack --ctstate NEW,ESTABLISHED		-j ACCEPT
+
+-A LocalIN	-p tcp  --dport webmin										-j ACCEPT
+
+-A LocalIN  -4	-p icmp		--icmp-type     8		-m conntrack --ctstate NEW,ESTABLISHED,RELATED	-j ACCEPT
+-A LocalOUT -4	-p icmp		--icmp-type     0 -d 0/0	-m conntrack --ctstate ESTABLISHED,RELATED	-j ACCEPT
+-A LocalIN  -6	-p ipv6-icmp	--icmpv6-type   8		-m conntrack --ctstate NEW,ESTABLISHED,RELATED	-j ACCEPT
+-A LocalOUT -6	-p ipv6-icmp	--icmpv6-type   0 -d 0/0	-m conntrack --ctstate ESTABLISHED,RELATED	-j ACCEPT
+
+-A LocalIN  -6	-p ipv6-icmp	--icmpv6-type 130								-j ACCEPT
+-A LocalIN  -6	-p ipv6-icmp	--icmpv6-type 131								-j ACCEPT
+-A LocalIN  -6	-p ipv6-icmp	--icmpv6-type 132								-j ACCEPT
+-A LocalIN  -6	-p ipv6-icmp	--icmpv6-type 143								-j ACCEPT
+-A LocalIN  -6	-p ipv6-icmp	--icmpv6-type 151								-j ACCEPT
+-A LocalIN  -6	-p ipv6-icmp	--icmpv6-type 152								-j ACCEPT
+-A LocalIN  -6	-p ipv6-icmp	--icmpv6-type 153								-j ACCEPT
+
+# 
+# 
+# Chains for special effects like dealing with attacks. 
+# The chain Fail2Ban is populated by Fail2Ban.  
+#
+#
+
+#-N apache_user
+#-A apache_user -j REJECT --reject-with icmp-port-unreachable
+
+# Chain for preventing SSH brute-force attacks.
+# Permits 10 new connections within 5 minutes from a single host then drops
+# incomming connections from that host. Beyond a burst of 100 connections we
+# log at up 1 attempt per second to prevent filling of logs.
+
+-A SSHBrute -m recent --name SSH --set
+-A SSHBrute -m recent --name SSH --update --seconds 300 --hitcount 10 -m limit --limit 1/second --limit-burst 100 -j LOG --log-prefix "IPTables [SSH-brute]: "
+-A SSHBrute -m recent --name SSH --update --seconds 300 --hitcount 10						-j DROP
+-A SSHBrute													-j ACCEPT
+
+# Chain for preventing ping flooding - up to 6 pings per second from a single
+# source, again with log limiting. Also prevents us from ICMP REPLY flooding
+# some victim when replying to ICMP ECHO from a spoofed source.
+
+-A ICMPFlood -m recent --set --name ICMP --rsource
+-A ICMPFlood -m recent --update --seconds 1 --hitcount 6 --name ICMP --rsource --rttl -m limit --limit 1/sec --limit-burst 1 -j LOG --log-prefix "IPTables [ICMP-flood]: "
+-A ICMPFlood -m recent --update --seconds 1 --hitcount 6 --name ICMP --rsource --rttl				-j DROP
+-A ICMPFlood													-j ACCEPT
+
+COMMIT
