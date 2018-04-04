@@ -52,7 +52,7 @@ load_rules()
         fi
 
 	if [ $(runlevel | cut -d ' ' -f2) -eq "5" ]; then
-		if  [ f /etc/init.d/fail2ban ]; then
+		if  [ -f /etc/init.d/fail2ban ]; then
 			echo "Restarting Fail2Ban too."
 			/etc/init.d/fail2ban restart
 		fi
