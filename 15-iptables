@@ -51,9 +51,8 @@ load_rules()
                 fi
         fi
 
-	if [ "$(cut -c 3- <<< $(runlevel))" -eq "5" ]; then
+	 if [ $(/usr/bin/cut -c 3- <<< "$(/sbin/runlevel)") == 5 ]; then
 		if  [ -f /etc/init.d/fail2ban ]; then
-			echo "Restarting Fail2Ban too."
 			/etc/init.d/fail2ban restart
 		fi
 	fi
