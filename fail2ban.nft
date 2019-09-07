@@ -1,5 +1,7 @@
 #!/usr/sbin/nft -f
 
+# adapted from https://wiki.meurisse.org/wiki/Fail2Ban
+
 table inet Fail2Ban {
         chain input {
                 # Assign a high priority to reject as fast as possible and avoid more complex rule evaluation
