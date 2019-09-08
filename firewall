@@ -1,0 +1,9 @@
+/var/log/firewall.log
+ {
+	rotate 4
+	daily
+	missingok
+	notifempty
+	delaycompress
+	compress
+ }
