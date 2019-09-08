@@ -1,0 +1,123 @@
+##
+## filter
+##
+##
+
+## Logging is added to rules that I want to monitor.
+## Logging to own log file through the magic word 'Firewall'. The log level is added if it should be something else than warn.
+## Logging "is a non-terminating statement, so the rule evaluation continues after the packet is logged." as the manpage says.
+## So: rule log prefix Firewall level { emerg, alert, crit, err, warn [default], notice, info, debug } { accept, drop }
+
+flush table inet filter
+
+#
+# Create table filter chains
+#
+#
+
+  add table inet filter
+  add chain inet filter INPUT		{ type filter hook input       priority    0; policy drop  ; }
+  add chain inet filter FORWARD		{ type filter hook forward     priority    0; policy drop  ; }
+  add chain inet filter OUTPUT		{ type filter hook output      priority    0; policy accept; }
+  add chain inet filter LocalIN
+  add chain inet filter LocalOUT
+
+#
+# Define chain INPUT
+#
+#
+
+# Basics
+
+  # Accept true localhost traffic, but block remote packets claiming to be from a loopback address.
+  add rule  inet filter INPUT iifname    "lo"										accept
+  add rule  inet filter INPUT iifname != "lo"  ip saddr 127.0.0.0/8							counter log prefix Firewall  drop
+  add rule  inet filter INPUT iifname != "lo" ip6 saddr ::1/128								counter log prefix Firewall  drop
+
+  # Continue connections that are already established or related to an established connection.
+  add rule  inet filter INPUT ct state related,established								accept
+
+  # Block bad traffic.
+  add rule  inet filter INPUT ct state invalid										  drop # Drop non-conforming packets
+  add rule  inet filter INPUT tcp flags & (fin|syn) == fin|syn								  drop
+  add rule  inet filter INPUT tcp flags & (syn|rst) == syn|rst								  drop
+  add rule  inet filter INPUT tcp flags & (fin|syn|rst|psh|ack|urg)  < (fin) 						  drop
+  add rule  inet filter INPUT tcp flags & (fin|syn|rst|psh|ack|urg) == (fin|psh|urg)					  drop
+  add rule  inet filter INPUT tcp dport 113 tcp flags & (fin|syn|rst|ack) == syn ct state new 				reject	with icmp type host-prohibited
+
+  # Accept some regular traffic.
+  add rule  inet filter INPUT udp sport ntp										accept
+  add rule  inet filter INPUT udp sport domain ct state established 							accept
+  add rule  inet filter INPUT tcp sport domain ct state established 							accept
+  add rule  inet filter INPUT  ip protocol igmp 									counter log prefix Firewall	accept
+
+  add rule  inet filter INPUT tcp dport { http, https,smtp,submission }							accept
+
+  # Address local traffic.
+  add rule  inet filter INPUT  ip saddr 192.168.178.0/24								  jump	LocalIN
+  add rule  inet filter INPUT ip6 saddr fe80::/8 									  jump	LocalIN
+
+  # Block traffic that should only be local.
+  add rule  inet filter INPUT udp dport { 135,netbios-ns,netbios-dgm,netbios-ssn,microsoft-ds } 			  drop	# SMB (Samba / Windows Sharing)
+  add rule  inet filter INPUT udp sport netbios-ns udp dport 1024-65535							  drop	# SMB (Samba / Windows Sharing)
+  add rule  inet filter INPUT udp dport 1900										  drop	# UPnP
+
+  # Accept various icmp packets, unless they're flooding.
+  add rule  inet filter INPUT icmp   type { destination-unreachable, time-exceeded, parameter-problem }			accept
+  add rule  inet filter INPUT icmp			type echo-request       limit rate 10/second burst 4 packets	accept
+  add rule  inet filter INPUT icmpv6 type { destination-unreachable, echo-request, packet-too-big, mld-listener-query, mld-listener-report, mld-listener-reduction, echo-reply } accept
+  add rule  inet filter INPUT ip6 nexthdr icmpv6 icmpv6 type { destination-unreachable, time-exceeded, parameter-problem, packet-too-big, mld-listener-query, mld-listener-report, mld-listener-reduction, ind-neighbor-solicit, ind-neighbor-advert, mld2-listener-report } accept
+  add rule  inet filter INPUT ip6 nexthdr icmpv6 icmpv6 type echo-request	limit rate 10/second burst 4 packets	accept
+
+  # Log what else comes in.
+  add rule  inet filter INPUT							limit rate 1/second burst 10 packets	counter log prefix Firewall
+  add rule  inet filter INPUT												counter log prefix Firewall level crit
+
+#
+# Chain for outbound traffic
+# With policy 'accept' rules are only relevant for dropping and/or logging.
+#
+
+  add rule  inet filter OUTPUT oifname "lo"										accept
+  add rule  inet filter OUTPUT 			ct state related,established						accept
+  add rule  inet filter OUTPUT tcp sport ssh 	ct state established							accept
+  add rule  inet filter OUTPUT udp dport domain ct state new,established						accept
+  add rule  inet filter OUTPUT tcp dport domain ct state new,established						accept
+  add rule  inet filter OUTPUT udp dport ntp 										accept
+  add rule  inet filter OUTPUT tcp sport rsync 	ct state established							accept
+  add rule  inet filter OUTPUT												log prefix Firewall	accept
+
+#
+# Chain for inbound traffic on the local, private network. As such, there is no need for -s and -d here.
+#
+#
+
+  add rule  inet filter LocalIN  ip saddr 192.168.178.40								accept
+  add rule  inet filter LocalIN ip6 saddr { fe80::28ea:4eb2:34f6:7d68, 2001:981:1b83:1:9bb5:fa4d:771c:ff6c }		accept
+  add rule  inet filter LocalIN     pkttype { broadcast, multicast }							accept
+
+  add rule  inet filter LocalIN icmp   type { router-solicitation, router-advertisement }				accept
+  add rule  inet filter LocalIN icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-solicit, nd-router-advert }			accept
+  add rule  inet filter LocalIN ip6 nexthdr icmpv6 icmpv6 type { nd-router-solicit, nd-router-advert, nd-neighbor-solicit, nd-neighbor-advert } accept
+
+  add rule  inet filter LocalIN udp sport bootps udp dport bootpc							accept
+  add rule  inet filter LocalIN tcp dport dhcpv6-client									log prefix Firewall	accept
+  add rule  inet filter LocalIN udp dport dhcpv6-client									log prefix Firewall	accept
+  add rule  inet filter LocalIN udp dport 7	ct state new,established						log prefix Firewall	accept	# Echo
+  add rule  inet filter LocalIN udp sport mdns	ct state new,established						accept
+  add rule  inet filter LocalIN udp dport mdns	ct state new,established						accept
+
+  add rule  inet filter LocalIN tcp dport   ssh 									accept # SSH brute-force attacks locally not expected
+  add rule  inet filter LocalIN tcp dport rsync	ct state new,established						accept
+
+  add rule  inet filter LocalIN udp dport 17500										  drop	# Dropbox
+  add rule  inet filter LocalIN tcp dport 17500										  drop	# Dropbox
+
+#
+# Chain for outbound traffic on the local, private network.
+# With policy 'accept' rules are only relevant for dropping and/or logging.
+#
+
+  add rule  inet filter LocalOUT udp dport  mdns ct state new,established						log prefix Firewall	accept
+  add rule  inet filter LocalOUT tcp dport  mdns ct state new,established						log prefix Firewall	accept
+
