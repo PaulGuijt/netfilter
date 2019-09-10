@@ -21,6 +21,7 @@ In /etc/rsyslog.conf I added in the Rules section
    & stop
 and restarted rsyslog with ' sudo systemctl restart rsyslog'. 
 Also I added the file firewall to /etc/logrotate.d. 
+In /etc/logwatch/conf/logfiles/iptables.conf I set the LogFile to /var/log/firewall.log. 
 
 Finally I did a 'sudo apt remove iptables ipset netfilter-persistent'. 
 
